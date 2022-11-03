@@ -1,0 +1,39 @@
+Для своей базы данных создайте объект для нахождения общего рейтинга топ 50 продавцов за всю историю продаж, 
+где рейтинг определяется количеством баллов за количество продаж в день 
+(10 и более продаж – 3 балла, 5-10 – 2 балла, меньше 5 – 1 балл). 
+
+DROP VIEW IF EXISTS [dbo].[vManagerRankingTop50];
+GO
+CREATE VIEW [dbo].[vManagerRankingTop50] AS
+SELECT TOP 50 WITH TIES *,
+	RANK() OVER(ORDER BY [ManagerScore] DESC) AS [ManagerRanking]
+FROM
+	(SELECT DISTINCT
+		[IDManager],
+		[FirstName],
+		[LastName],
+		[Position],
+		SUM([DailyScore]) OVER(PARTITION BY [IDManager]) AS [ManagerScore]
+	FROM
+		(SELECT DISTINCT
+			M.[IDManager],
+			M.[FirstName],
+			M.[LastName],
+			M.[Position],
+			S.[DataSales],
+			COUNT(S.[DataSales]) OVER(PARTITION BY M.[IDManager],S.[DataSales]) AS [DailySales],
+			CASE
+				WHEN COUNT(S.[DataSales]) OVER(PARTITION BY M.[IDManager],S.[DataSales]) = 0 THEN 0
+				WHEN COUNT(S.[DataSales]) OVER(PARTITION BY M.[IDManager],S.[DataSales]) < 5 THEN 1
+				WHEN COUNT(S.[DataSales]) OVER(PARTITION BY M.[IDManager],S.[DataSales]) < 10 THEN 2
+				ELSE 3
+			END AS [DailyScore]
+		FROM [TMSGroup2].[dbo].[ManagersDim] M
+			LEFT JOIN [TMSGroup2].[dbo].[SalesFct] S
+			ON M.[IDManager] = S.[IDManager]
+	) T1
+) T2
+ORDER BY [ManagerScore] DESC;
+GO
+SELECT *
+FROM [dbo].[vManagerRankingTop50];

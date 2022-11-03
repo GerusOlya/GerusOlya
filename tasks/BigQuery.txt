@@ -1,0 +1,152 @@
+WITH 
+
+--
+-- Values_main_industry_scope_sales
+--
+metric_values_main_industry_scope_sales AS (
+    SELECT
+        -- DIMENSIONS
+         'day' AS 'period'
+        , DATE(DATE_TRUNC(`date`, DAY)) as `date`
+        , bank_id AS data_partner_id
+        , 'ob_using_brands' AS industry_type
+        , COALESCE(b.industry_id, mcc.industry_id, 8) as industry_id
+        , COALESCE(b.country_id, t.country_id, c.country_id) as country_id
+
+        -- METRICS
+        , CAST(COUNT(uid) as FLOAT64) AS transactions
+        , CAST(SUM(amount_byn) as FLOAT64) AS revenue_byn
+        , CAST(AVG(amount_byn) as FLOAT64) AS avg_bill_byn
+
+        , APPROX_QUANTILES(amount_byn, 100)[OFFSET(25)] AS avg_bill_byn_percentile_25
+        , APPROX_QUANTILES(amount_byn, 100)[OFFSET(50)] AS avg_bill_byn_percentile_50
+        , APPROX_QUANTILES(amount_byn, 100)[OFFSET(75)] AS avg_bill_byn_percentile_75
+
+        , CAST(NULL as FLOAT64) as avg_revenue_per_client_monthly_byn
+
+    FROM 
+       `Table1` AS t
+      LEFT JOIN ` Table2` AS c
+        ON t.location_id = c.id
+      LEFT JOIN ` Table3` AS mcc
+        ON mcc.mcc = t.mcc
+      LEFT JOIN ` Table4` AS b
+        ON b.id = t.brand_id
+    WHERE 
+        DATE(`date`) BETWEEN @start_date AND @end_date_for_daily_scope
+        AND `type_normal` = 'payment'
+    GROUP BY `period`, `date`, data_partner_id, industry_type, industry_id, country_id
+
+
+    UNION ALL
+ 
+        SELECT
+        -- DIMENSIONS
+        'week' AS `period`
+        , DATE(DATE_TRUNC(`date`, WEEK(MONDAY))) as `date`
+        , bank_id AS data_partner_id
+        , 'ob_using_brands' AS industry_type
+        , COALESCE(b.industry_id, mcc.industry_id, 8) as industry_id
+        , COALESCE(b.country_id, t.country_id, c.country_id) as country_id
+
+        -- METRICS
+        , CAST(COUNT(uid) as FLOAT64) AS transactions
+        , CAST(SUM(amount_byn) as FLOAT64) AS revenue_byn
+        , CAST(AVG(amount_byn) as FLOAT64) AS avg_bill_byn
+
+        , APPROX_QUANTILES(amount_byn, 100)[OFFSET(25)] AS avg_bill_byn_percentile_25
+        , APPROX_QUANTILES(amount_byn, 100)[OFFSET(50)] AS avg_bill_byn_percentile_50
+        , APPROX_QUANTILES(amount_byn, 100)[OFFSET(75)] AS avg_bill_byn_percentile_75
+
+        , CAST(NULL as FLOAT64) as avg_revenue_per_client_monthly_byn
+
+    FROM 
+       `Table1` AS t
+      LEFT JOIN ` Table2` AS c
+        ON t.location_id = c.id
+      LEFT JOIN ` Table3` AS mcc
+        ON mcc.mcc = t.mcc
+      LEFT JOIN ` Table4` AS b
+        ON b.id = t.brand_id
+    WHERE 
+        DATE(`date`) BETWEEN DATE(DATE_TRUNC(@start_date, WEEK(MONDAY))) 
+            AND DATE(DATE_SUB(DATE_TRUNC(DATE_ADD(@end_date, INTERVAL 1 DAY), WEEK(MONDAY)), INTERVAL 1 DAY))
+        AND `type_normal` = 'payment'
+    GROUP BY  `period`, `date`, data_partner_id, industry_type, industry_id, country_id
+
+    UNION ALL
+
+    SELECT
+        -- DIMENSIONS
+        'month' AS `period`
+        , DATE(DATE_TRUNC(`date`, MONTH)) as `date`
+        , bank_id AS data_partner_id
+        , 'ob_using_brands' AS industry_type
+        , COALESCE(b.industry_id, mcc.industry_id, 8) as industry_id
+        , COALESCE(b.country_id, t.country_id, c.country_id) as country_id
+
+        -- METRICS
+        , CAST(COUNT(uid) as FLOAT64) AS transactions
+        , CAST(SUM(amount_byn) as FLOAT64) AS revenue_byn
+        , CAST(AVG(amount_byn) as FLOAT64) AS avg_bill_byn
+
+        , APPROX_QUANTILES(amount_byn, 100)[OFFSET(25)] AS avg_bill_byn_percentile_25
+        , APPROX_QUANTILES(amount_byn, 100)[OFFSET(50)] AS avg_bill_byn_percentile_50
+        , APPROX_QUANTILES(amount_byn, 100)[OFFSET(75)] AS avg_bill_byn_percentile_75
+
+        , ROUND(CAST(SUM(amount_byn) / COUNT(DISTINCT user_id) as FLOAT64), 2) as avg_revenue_per_client_monthly_byn
+
+    FROM 
+       `Table1` AS t
+      LEFT JOIN ` Table2` AS c
+        ON t.location_id = c.id
+      LEFT JOIN ` Table3` AS mcc
+        ON mcc.mcc = t.mcc
+      LEFT JOIN ` Table4` AS b
+        ON b.id = t.brand_id
+    WHERE 
+        DATE(`date`) BETWEEN DATE(DATE_TRUNC(@start_date, MONTH)) 
+            AND DATE(DATE_SUB(DATE_TRUNC(DATE_ADD(@end_date, INTERVAL 1 DAY), MONTH), INTERVAL 1 DAY))
+        AND `type_normal` = 'payment'
+    GROUP BY `period`, `date`, data_partner_id, industry_type, industry_id, country_id
+
+)
+
+
+--
+-- metric_values_main_industry_scope_sales - UNPIVOT
+--
+SELECT 
+    `period`, 
+    `date`, 
+    data_partner_id,
+    industry_type,
+    industry_id,
+    country_id
+
+    CASE 
+        WHEN metric_id_and_group LIKE 'revenue%' THEN 1
+        WHEN metric_id_and_group LIKE 'avg_bill%' THEN 
+            CASE
+                WHEN metric_id_and_group LIKE '%percentile%' THEN 6
+                ELSE 2
+            END
+        WHEN metric_id_and_group LIKE 'transactions%' THEN 3
+        WHEN metric_id_and_group LIKE 'avg_revenue_per_client%' THEN 5
+    END as metric_id,
+    metric_id_and_group AS `group`,
+    round(value, 3) AS value_raw
+FROM metric_values_main_industry_scope_sales
+UNPIVOT(value FOR metric_id_and_group IN (
+    transactions, revenue_byn, avg_bill_byn, 
+    avg_bill_byn_percentile_25, avg_bill_byn_percentile_50, avg_bill_byn_percentile_75,
+    avg_revenue_per_client_monthly_byn
+    )
+)
+WHERE 
+	COALESCE(industry_id,-1) > 0
+	AND `value` > 0
+
+
+
+
